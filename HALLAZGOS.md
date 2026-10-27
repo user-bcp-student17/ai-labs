@@ -5,7 +5,33 @@
 | H-API-01 | api | Filtros e inserciones SQL concatenan valores de entrada | Vulnerabilidad | Resuelto: se movieron las consultas dinamicas a `TaskRepository` y se enlazan los valores con parametros SQLite; pruebas con apostrofes cubren filtros e inserciones. | api/app/repositories.py:8-42, api/tests/test_api.py:42-72 | alta | Resuelto |
 | H-API-02 | api | El propietario no queda ligado a la identidad autenticada | Vulnerabilidad | Pendiente: se rechazan propietarios distintos, pero `owner=""` se trata como ausente y permite crear con 201; el test de regresión estricto reproduce `201` en vez del `403` acordado. | api/app/routes.py:49; api/app/schemas.py:11-16; api/tests/test_api.py:120-148 | alta | Pendiente |
 | H-API-03 | api | La carga usa el nombre de archivo recibido sin normalizar ni limitar tamaño o extensión | Vulnerabilidad | Pendiente: el validador acepta `requirements.txt:payload.txt`; en Windows el test de regresión estricto reproduce `201` en vez del `400` esperado. La extensión y el límite de tamaño sí se controlan. | api/app/upload_service.py:18-27,37-38; api/tests/test_api.py:202-241 | alta | Pendiente |
-| H-API-04 | api | El token es Base64 con secreto hardcodeado y sin verificación de firma | Vulnerabilidad | Base64 solo codifica el contenido; comparar un secreto fijo no autentica criptográficamente el token, por lo que quien pueda construir el formato y conocer el secreto podría falsificar la identidad. | api/app/main.py:14,20,22 | alta | Pendiente |
+| H-API-04 | api | El token es Base64 con secreto hardcodeado y sin verificación de firma | Vulnerabilidad | Resuelto en API: verificación JWT RS256 con `sub`, `iss`, `aud` y `exp` obligatorios; la clave pública y parámetros se obtienen de configuración externa, sin fallback legacy. Integración con Auth queda pendiente de prueba con su emisor. | api/app/security.py:8-61; api/tests/test_api.py:20-93,332-421 | alta | Resuelto |
 | H-API-05 | api | Rutas, reglas, SQLite y serialización están concentradas en un módulo | Refactor | Resuelto: rutas, autenticación, servicios de resumen, repositorio y carga quedaron separados en módulos; las pruebas de contrato de las cinco rutas pasan. | api/app/main.py:14,33-34; api/app/routes.py:33-82; api/app/services.py:5-29; api/tests/test_api.py:21-266 | media | Resuelto |
 | H-API-06 | api | Tipado genérico, manejo amplio de excepciones, lógica anidada y proyección SQL repetida | Refactor | Resuelto: se agregaron modelos Pydantic de request/response, conversión legacy explícita, lógica de resumen plana, captura de errores específicos y mensajes genéricos. | api/app/schemas.py:6-58; api/app/security.py:11-20; api/app/services.py:17-29; api/app/routes.py:21-97; api/tests/test_api.py:66-263 | media | Resuelto |
-| H-API-07 | api | Versiones de dependencias requieren revisión SCA | Vulnerabilidad | Resuelto: advisories publicos incluyeron los pins previos en rangos afectados y se actualizaron a `urllib3 2.8.0` y `python-multipart 0.0.30`; los patrones vulnerables descritos no se usan directamente por estas rutas. | api/requirements.txt:4-5; GitHub Advisories GHSA-8988-9cw3-xx77, GHSA-vxq7-64xx-v4gw, GHSA-5rvq-cxj2-64vf | baja | Resuelto |
+| H-API-07 | api | Versiones de dependencias requieren revisión SCA | Vulnerabilidad | Reabierto: la auditoría de requisitos reportó advisories para `python-multipart 0.0.30` y Starlette `0.50.0`; requieren análisis y remediación separados. No se ocultó el resultado ni se amplió H-API-04. | api/requirements.txt:1,5; comando `python -m pip_audit -r requirements.txt` desde `api/` | baja | Pendiente |
+
+## Candidatos de discovery - API
+
+### H-API-08 - Colision de archivos cargados por identidades distintas
+- Estado: CANDIDATO
+- Evidencia: `api/app/upload_service.py:31-39` valida el nombre y guarda en `Path(upload_dir) / filename`; la ruta `api/app/routes.py:66-76` obtiene la identidad, pero no la pasa al almacenamiento. El contrato de `POST /api/requirements` describe el archivo como asociado al usuario autenticado (`docs/ENDPOINTS.md:190-216`).
+- Impacto: dos usuarios que carguen el mismo nombre comparten destino y la segunda carga puede reemplazar los bytes de la primera; puede provocar pérdida o contaminación de datos entre identidades.
+- Prioridad propuesta: Media.
+- Contrato potencialmente afectado: aislamiento por usuario y respuesta `201` de `POST /api/requirements`, en particular `owner`, `fileName` y `storedAt`.
+- Como validarlo: con un directorio temporal, cargar el mismo nombre permitido con contenidos distintos usando dos identidades; comprobar si ambas respuestas apuntan al mismo destino y si la segunda carga reemplaza el contenido almacenado.
+
+### H-API-09 - El rol autenticado no participa en la autorizacion
+- Estado: CANDIDATO
+- Evidencia: `api/app/security.py:18-25` extrae el rol, pero `ensure_owner_access` solo compara el nombre de usuario; las rutas protegidas dependen de la identidad en `api/app/routes.py:33-81` y no comprueban el rol.
+- Impacto: si hay operaciones que deban restringirse por rol, cualquier identidad autenticada puede invocarlas; la matriz de permisos esperada no está definida en la evidencia revisada.
+- Prioridad propuesta: Baja, pendiente de confirmar la política de roles.
+- Contrato potencialmente afectado: autorización de `GET /api/tasks`, `POST /api/tasks`, `GET /api/summary`, `POST /api/requirements` y `GET /api/backend-health`.
+- Como validarlo: acordar primero una matriz de permisos; después, probar cada ruta con identidades de cada rol y verificar respuestas permitidas o `403` conforme a esa matriz.
+
+### H-API-10 - Conexion SQLite compartida entre solicitudes concurrentes
+- Estado: CANDIDATO
+- Evidencia: `api/app/main.py:20,33` crea una conexión con `check_same_thread=False` y la comparte mediante `TaskRepository`; `api/app/repositories.py:18-32` ejecuta y confirma escrituras en esa conexión sin sincronización explícita.
+- Impacto: solicitudes concurrentes podrían interferir en transacciones o producir errores de base de datos; no se ha confirmado el comportamiento bajo carga concurrente.
+- Prioridad propuesta: Media.
+- Contrato potencialmente afectado: `POST /api/tasks` y la consistencia de las lecturas posteriores en `GET /api/tasks` y `GET /api/summary`.
+- Como validarlo: ejecutar solicitudes concurrentes de creación contra una base SQLite temporal; verificar que todas las respuestas sean `201`, que no haya errores de base de datos y que las filas confirmadas coincidan con las solicitudes aceptadas.
