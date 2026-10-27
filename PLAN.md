@@ -57,7 +57,9 @@ Las pruebas actuales cubren solo parte de esos resultados en `api/tests/test_api
 - **Cambio propuesto:** adoptar verificacion JWT de firma, emisor, audiencia y expiracion; obtener la clave de configuracion externa y no incluir secretos reales. Una biblioteca JWT mantenida (por ejemplo PyJWT) estaria justificada por la verificacion criptografica requerida, pero su inclusion y version deben pasar revision SCA antes de agregarse a `api/requirements.txt`.
 - **Archivos a tocar:** `api/app/main.py`, `api/tests/test_api.py`, `api/requirements.txt` si se aprueba la dependencia; crear `api/app/security.py` para aislar la verificacion.
 - **Caracterizacion antes del cambio:** ampliar la prueba de token invalido (`api/tests/test_api.py:54-58`) y registrar status y estructura de error de tokens aceptados, malformados y vencidos. Para la nueva verificacion, probar firma invalida, `exp`, `iss` y `aud` con secretos ficticios.
-- **Bloqueo de contrato:** el token actual usa un formato propio y no hay `docs/ENDPOINTS.md`. No se leyo el componente emisor por el limite de alcance. El usuario indico que proporcionara el perfil JWT del emisor; hasta recibir algoritmo, `iss`, `aud`, claims y configuracion de clave, no cambiar la aceptacion de tokens.
+- **Decisión aplicada:** se adopta un perfil JWT RS256 con `sub`, `iss`, `aud` y `exp` obligatorios; `role` es opcional y no se usa para autorizar. La API lee clave pública, emisor y audiencia de `AUTH_JWT_PUBLIC_KEY`, `AUTH_JWT_ISSUER` y `AUTH_JWT_AUDIENCE`. Se rechaza el formato Base64 legacy, sin fallback.
+- **Dependencia:** se fijaron `PyJWT[crypto]==2.15.1` y `cryptography==50.0.2` después de revisar advisories disponibles; `pip-audit` no reportó hallazgos para esas dependencias. La auditoría sí reportó advisories en Starlette y `python-multipart`; quedan fuera de H-API-04 y deben revisarse bajo H-API-07.
+- **Integración pendiente:** Auth no se modificó ni se probó. El emisor debe emitir el perfil acordado y proporcionar los valores de configuración en cada entorno. No se almacenan valores de claves ni tokens en el repositorio.
 
 ### H-API-05 — Responsabilidades concentradas
 
@@ -84,8 +86,8 @@ Las pruebas actuales cubren solo parte de esos resultados en `api/tests/test_api
 
 - H-API-02: decision `403` registrada; la revision local encontro que `owner=""` se trata como ausente y devuelve 201 en creacion. Estado reabierto a Pendiente; agregar caracterizacion para owner explicito vacio y rechazarlo con 403.
 - H-API-03: politica acordada; la revision local encontro que `requirements.txt:payload.txt` pasa el validador de nombre. Estado reabierto a Pendiente; rechazar `:` y cubrir nombres ADS en Windows antes de guardar.
-- Acordar emisor, audiencia, claims y migracion del token JWT con el responsable del emisor; no se inspeccionaron componentes externos.
-- H-API-07: pins actualizados segun advisories publicos; `pip-audit` no esta instalado, por lo que no se genero un informe automatizado.
+- H-API-04: validar con el responsable de Auth que su emisor usa RS256, `sub`, `iss`, `aud` y `exp`; realizar prueba integrada en un entorno con configuración externa antes de cerrar la integración.
+- H-API-07: `pip-audit` reportó advisories para `python-multipart==0.0.30` y Starlette `0.50.0`; revisar remediaciones sin ocultar el gate.
 - La documentacion indica Python 3.13; la ejecucion previa disponible fue con Python 3.14.7 y el virtualenv no tiene `pytest`. Preparar el entorno documentado antes de la caracterizacion formal.
 - La aprobacion humana de Rodolfo, fechada 2026-10-26, cubre H-API-01 a H-API-07.
 
@@ -109,3 +111,9 @@ Las pruebas actuales cubren solo parte de esos resultados en `api/tests/test_api
 - **API — H-API-07 — revision de advisories:** GitHub [GHSA-8988-9cw3-xx77](https://github.com/advisories/GHSA-8988-9cw3-xx77) (`urllib3 <2.8.0`, corregido en 2.8.0), [GHSA-vxq7-64xx-v4gw](https://github.com/advisories/GHSA-vxq7-64xx-v4gw) (`urllib3 <2.8.0`, corregido en 2.8.0), [GHSA-38jv-5279-wg99](https://github.com/advisories/GHSA-38jv-5279-wg99) (`urllib3 <2.6.3`, corregido en 2.6.3) y [GHSA-5rvq-cxj2-64vf / CVE-2026-53539](https://github.com/advisories/GHSA-5rvq-cxj2-64vf) (`python-multipart <0.0.30`, corregido en 0.0.30). El codigo usa `PoolManager.request` sin streaming/proxy configurado y no expone endpoints `application/x-www-form-urlencoded`; se actualizaron los pins afectados como remediacion preventiva. `pip-audit` no esta instalado, por lo que no hubo informe automatizado.
 - **API — H-API-07 — instalacion y regresion posterior:** en `api/.venv`, instalacion desde `requirements.txt` y `requirements-dev.txt`; versiones verificadas `urllib3 2.8.0`, `python-multipart 0.0.30`, `pip check` sin conflictos. `python -m pytest --cov=app --cov-report=term-missing`: 18 pasaron, 39 advertencias, cobertura total 98% en Python 3.14.7.
 - **API — H-API-06 — verificacion final de retornos tipados:** tras cambiar las anotaciones de handlers y servicios a modelos Pydantic, `.venv\\Scripts\\python.exe -m pytest --cov=app --cov-report=term-missing`: 18 pasaron, 39 advertencias, cobertura total 98% en Python 3.14.7.
+- **API — H-API-04 — baseline:** `python tools/lab.py test api`: 34 pasaron, 2 xfail; cobertura total 98.98% en Python 3.14.7.
+- **API — H-API-04 — caracterización antes del cambio:** desde `api/`, `python -m pytest tests/test_api.py -k accepts_configured_rs256_jwt -q`: falló como se esperaba porque el token firmado recibió HTTP 401.
+- **API — H-API-04 — regresión posterior:** `python tools/lab.py test api`: 46 pasaron, 2 xfail; cobertura total 97.76%, `app/security.py` 94%, gate de 85% satisfecho.
+- **API — H-API-04 — casos focalizados:** `python -m pytest tests/test_api.py -k "jwt or authorization or invalid_token" -q`: 17 pasaron.
+- **API — H-API-04 — SCA:** `python -m pip_audit` reportó 14 advisories del entorno; `python -m pip_audit -r requirements.txt` reportó 12 para Starlette y `python-multipart`. No se reportó PyJWT. No se ocultaron ni corrigieron aquí los hallazgos ajenos al alcance.
+- **API — H-API-04 — Compose:** `docker compose config --quiet` no pudo ejecutarse porque Docker no está instalado en el entorno.

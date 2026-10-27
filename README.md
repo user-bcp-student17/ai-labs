@@ -41,6 +41,11 @@ Necesitas Docker con Compose y el motor iniciado. Podman Compose es otra opción
 docker compose up --build
 ```
 
+Antes de arrancar, configura `AUTH_JWT_PUBLIC_KEY`, `AUTH_JWT_ISSUER` y
+`AUTH_JWT_AUDIENCE` en el entorno. La API los requiere para validar tokens; sin
+esa configuración, las solicitudes Bearer reciben `503`. No guardes claves
+privadas ni tokens en el repositorio.
+
 Abre http://localhost:4200. Usuario ficticio student, contraseña Workshop123!. Autenticación publica http://localhost:8080/q/health y la API http://localhost:8000/docs. La primera ejecución descarga imágenes y dependencias. Espera a que los tres servicios respondan: el orden de arranque no certifica que estén listos.
 
 En otra terminal puedes ver el estado y la salida:

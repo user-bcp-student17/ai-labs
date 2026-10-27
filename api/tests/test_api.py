@@ -3,7 +3,10 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import jwt
 import urllib3
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 import pytest
 
@@ -11,13 +14,58 @@ from app.main import create_app
 from app.routes import get_upload_directory
 
 
-def token(username: str = "student", role: str = "STUDENT") -> str:
-    raw = f"{username}|{role}|{int(time.time()) + 3600}|WORKSHOP_SECRET_2026"
-    return base64.b64encode(raw.encode()).decode()
+JWT_ISSUER = "https://issuer.test"
+JWT_AUDIENCE = "workshop-api"
+TEST_PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+OTHER_PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+TEST_PUBLIC_KEY = TEST_PRIVATE_KEY.public_key().public_bytes(
+    serialization.Encoding.PEM,
+    serialization.PublicFormat.SubjectPublicKeyInfo,
+).decode("ascii")
+
+
+@pytest.fixture(autouse=True)
+def configure_jwt_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AUTH_JWT_PUBLIC_KEY", TEST_PUBLIC_KEY)
+    monkeypatch.setenv("AUTH_JWT_ISSUER", JWT_ISSUER)
+    monkeypatch.setenv("AUTH_JWT_AUDIENCE", JWT_AUDIENCE)
+
+
+def token(
+    username: str = "student",
+    role: str = "STUDENT",
+    signing_key=TEST_PRIVATE_KEY,
+    omit_claims: tuple[str, ...] = (),
+    **claim_overrides: object,
+) -> str:
+    claims: dict[str, object] = {
+        "sub": username,
+        "role": role,
+        "iss": JWT_ISSUER,
+        "aud": JWT_AUDIENCE,
+        "exp": int(time.time()) + 3600,
+    }
+    claims.update(claim_overrides)
+    for claim_name in omit_claims:
+        claims.pop(claim_name, None)
+    return jwt.encode(claims, signing_key, algorithm="RS256")
 
 
 def headers(username: str = "student", role: str = "STUDENT") -> dict[str, str]:
     return {"Authorization": f"Bearer {token(username, role)}"}
+
+
+def test_accepts_configured_rs256_jwt(
+    tmp_path: Path, configure_jwt_environment: None
+) -> None:
+    encoded_token = token()
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/tasks", headers={"Authorization": f"Bearer {encoded_token}"}
+        )
+    assert response.status_code == 200
+    assert response.json()[0]["owner"] == "student"
 
 
 def test_lists_seeded_tasks(tmp_path: Path) -> None:
@@ -260,6 +308,91 @@ def test_rejects_invalid_token(tmp_path: Path) -> None:
     app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
     with TestClient(app) as client:
         response = client.get("/api/tasks", headers={"Authorization": "Bearer invalid"})
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid token"}
+
+
+@pytest.mark.parametrize(
+    ("claim_name", "claim_value"),
+    [
+        ("exp", 1),
+        ("iss", "https://unexpected.test"),
+        ("aud", "another-api"),
+    ],
+)
+def test_rejects_jwt_with_invalid_registered_claim(
+    claim_name: str, claim_value: object, tmp_path: Path
+) -> None:
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/tasks",
+            headers={"Authorization": f"Bearer {token(**{claim_name: claim_value})}"},
+        )
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid token"}
+
+
+def test_rejects_jwt_signed_by_another_key(tmp_path: Path) -> None:
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/tasks",
+            headers={
+                "Authorization": f"Bearer {token(signing_key=OTHER_PRIVATE_KEY)}"
+            },
+        )
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid token"}
+
+
+@pytest.mark.parametrize("claim_name", ("sub", "iss", "aud", "exp"))
+def test_rejects_jwt_missing_required_claim(claim_name: str, tmp_path: Path) -> None:
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/tasks",
+            headers={
+                "Authorization": f"Bearer {token(omit_claims=(claim_name,))}"
+            },
+        )
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid token"}
+
+
+def test_rejects_legacy_base64_token(tmp_path: Path) -> None:
+    legacy_token = base64.b64encode(b"legacy-format-token").decode("ascii")
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/tasks", headers={"Authorization": f"Bearer {legacy_token}"}
+        )
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid token"}
+
+
+def test_missing_jwt_configuration_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("AUTH_JWT_PUBLIC_KEY")
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    with TestClient(app) as client:
+        response = client.get("/api/tasks", headers=headers())
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Authentication configuration unavailable"
+    }
+
+
+def test_missing_authorization_returns_401_without_jwt_configuration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("AUTH_JWT_PUBLIC_KEY")
+    monkeypatch.delenv("AUTH_JWT_ISSUER")
+    monkeypatch.delenv("AUTH_JWT_AUDIENCE")
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    with TestClient(app) as client:
+        response = client.get("/api/tasks")
     assert response.status_code == 401
     assert response.json() == {"detail": "Invalid token"}
 

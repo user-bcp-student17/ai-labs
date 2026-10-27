@@ -8,6 +8,9 @@ services:
     build: ./api
     environment:
       AUTH_HEALTH_URL: http://auth:8080/q/health
+      AUTH_JWT_PUBLIC_KEY: ${AUTH_JWT_PUBLIC_KEY:-}
+      AUTH_JWT_ISSUER: ${AUTH_JWT_ISSUER:-}
+      AUTH_JWT_AUDIENCE: ${AUTH_JWT_AUDIENCE:-}
       WORKSHOP_DB_PATH: /data/workshop.db
       WORKSHOP_UPLOAD_DIR: /uploads
     volumes:
