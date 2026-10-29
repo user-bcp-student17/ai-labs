@@ -37,6 +37,12 @@ Todos los casos pertenecen al componente `api`. El código ejecutable completo e
 | `GET /api/backend-health` | Transporte falla o body no es UTF-8 (`test_backend_health_returns_generic_error`, `test_backend_health_returns_generic_error_for_invalid_utf8`) | Borde/error controlado | API `200`, `status: 0`, mensaje genérico. |
 | `GET /api/backend-health` | Header ausente (`test_every_endpoint_rejects_missing_authorization`) | Error `401` | `{"detail":"Invalid token"}`. |
 | `GET /api/backend-health` | Error inesperado de upstream (`test_backend_health_returns_generic_internal_error_for_unexpected_failure`) | Error `500` | Status `500`, cuerpo `Internal Server Error`. |
+| Las cinco rutas protegidas | JWT RS256 válido sin `role` (`test_valid_jwt_without_role_reaches_every_protected_route`) | Camino feliz | `200`/`201` según ruta; identidad desde `sub`, `role` no requerido. |
+| `POST /api/tasks` | Authorization malformado: esquema Basic, `Bearer` vacío, dos partes o esquema desconocido (`test_rejects_malformed_authorization_without_creating_task`) | Error `401` | `{"detail":"Invalid token"}` y sin inserción. |
+| Rutas protegidas | Falta `AUTH_JWT_ISSUER` o `AUTH_JWT_AUDIENCE` (`test_missing_jwt_issuer_or_audience_fails_closed`) | Error `503` | `{"detail":"Authentication configuration unavailable"}`. |
+| `GET /api/tasks` | Clave pública no utilizable (`test_unusable_jwt_public_key_fails_closed`) | Error `503` | `{"detail":"Authentication configuration unavailable"}`. |
+| `GET /api/tasks` | PEM con saltos `\n` escapados (`test_accepts_jwt_when_pem_newlines_are_escaped`) | Borde | `200`. |
+| `GET /api/tasks` | Credencial rechazada y configuración ausente; revisa logs (`test_authentication_failures_do_not_log_credentials_or_key`) | Regresión de seguridad | Token, clave pública y `BEGIN PUBLIC KEY` ausentes en logs y salida capturada. |
 
 ## Código de pruebas
 
@@ -237,6 +243,7 @@ Comandos ejecutados desde `api/`, en Windows, Python `3.14.7` (el README del pro
 | `python -m pytest tests/test_api.py -k "explicit_empty_task_owner or alternate_data_stream" -rx -q` | `api/` | `0` | `2 xfailed` con razones H-API-02/H-API-03. |
 | `python -m pytest tests/test_api.py -k "explicit_empty_task_owner or alternate_data_stream" --runxfail -q` | `api/` | `1` | 2 fallos esperados: `201 != 403` en `owner=""`; `201 != 400` para `requirements.txt:payload.txt`. Confirma los bugs, no es un gate verde. |
 | `python -m pytest --cov=app --cov-report=term-missing -rx` | `api/` | `0` | `34 passed`, `2 xfailed`, 75 warnings; resultado final de regresión. |
+| `python -m pytest --cov=app --cov-report=term-missing -p no:warnings -rx` (tras caracterización JWT de tareas 1.1-1.4) | `api/` | `0` | `60 passed`, `2 xfailed`; `app/security.py` 96%. Requiere `pip install -r requirements.txt`, ya que `requirements-dev.txt` no incluye PyJWT. |
 
 ## Cobertura
 

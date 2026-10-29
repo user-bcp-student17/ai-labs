@@ -67,7 +67,7 @@ Ejemplo completo (la fecha/hora e IDs dependen de los datos):
 | `403 Forbidden` | `owner` no vacío distinto del username autenticado. | `{"detail":"Owner access denied"}` |
 | `500 Internal Server Error` | Fallo inesperado, por ejemplo de SQLite. El formato de error interno no está definido por esta ruta; ejemplo del servidor ASGI por defecto: `Internal Server Error` (texto plano). | `Internal Server Error` |
 
-6. **Notas de seguridad:** el repositorio filtra por la identidad derivada del token y `ensure_owner_access` rechaza otro propietario. Sin embargo, el handler evalúa `owner or username`: `owner=` vacío se interpreta como omitido, no como un valor explícito que deba rechazarse. El token Base64 no demuestra integridad criptográfica. Referencias: `api/app/routes.py:32-41`, `api/app/security.py:11-25`, `api/app/repositories.py:8-13`.
+6. **Notas de seguridad:** el repositorio filtra por la identidad derivada del token y `ensure_owner_access` rechaza otro propietario. Sin embargo, el handler evalúa `owner or username`: `owner=` vacío se interpreta como omitido, no como un valor explícito que deba rechazarse. La identidad proviene de `sub` de un JWT RS256 verificado. Referencias: `api/app/routes.py:32-41`, `api/app/security.py:11-25`, `api/app/repositories.py:8-13`.
 
 ### `POST /api/tasks`
 
@@ -133,7 +133,7 @@ Ejemplo completo (ID y fecha/hora dependen de la base de datos):
 | `422 Unprocessable Entity` | El body no es un objeto JSON que pueda validarse como request, o el JSON está malformado. Los detalles dependen del error de validación. | `{"detail":[{"type":"model_attributes_type","loc":["body"],"msg":"Input should be a valid dictionary or object to extract fields from","input":[]}]}` |
 | `500 Internal Server Error` | Fallo inesperado, por ejemplo de SQLite. El formato interno no es un contrato estable; ejemplo del servidor ASGI por defecto: `Internal Server Error` (texto plano). | `Internal Server Error` |
 
-6. **Notas de seguridad:** el propietario efectivo se compara con el username autenticado y las consultas usan parámetros SQL. El riesgo pendiente H-API-02 es que `owner: ""` cae al username y se crea la tarea (en lugar de responder `403` como se acordó). El campo `role` del token no aplica permisos y el token no tiene firma verificable. Referencias: `api/app/routes.py:43-52`, `api/app/schemas.py:6-29`, `api/app/security.py:23-25`, `api/app/repositories.py:15-25`.
+6. **Notas de seguridad:** el propietario efectivo se compara con el username autenticado y las consultas usan parámetros SQL. El riesgo pendiente H-API-02 es que `owner: ""` cae al username y se crea la tarea (en lugar de responder `403` como se acordó). El campo `role` del token no aplica permisos y el token se verifica con RS256. Referencias: `api/app/routes.py:43-52`, `api/app/schemas.py:6-29`, `api/app/security.py:23-25`, `api/app/repositories.py:15-25`.
 
 ### `GET /api/summary`
 
@@ -186,7 +186,7 @@ Ejemplo completo:
 | `403 Forbidden` | `owner` no vacío distinto del username autenticado. | `{"detail":"Owner access denied"}` |
 | `500 Internal Server Error` | Fallo inesperado, por ejemplo de SQLite. El formato interno no es un contrato estable; ejemplo del servidor ASGI por defecto: `Internal Server Error` (texto plano). | `Internal Server Error` |
 
-6. **Notas de seguridad:** el resumen se calcula sobre las tareas del propietario extraído de la identidad y se rechaza otro propietario. `owner=` vacío se trata como omitido por el fallback actual. La identidad procede del token Base64 legacy, no de un JWT verificado. Referencias: `api/app/routes.py:54-63`, `api/app/services.py:18-31`, `api/app/security.py:11-25`.
+6. **Notas de seguridad:** el resumen se calcula sobre las tareas del propietario extraído de la identidad y se rechaza otro propietario. `owner=` vacío se trata como omitido por el fallback actual. La identidad procede de `sub` de un JWT RS256 verificado. Referencias: `api/app/routes.py:54-63`, `api/app/services.py:18-31`, `api/app/security.py:11-25`.
 
 ### `POST /api/requirements`
 
@@ -302,7 +302,7 @@ Ejemplo completo cuando el upstream no está disponible (también `200 OK`):
 
 - **H-API-02:** ¿debe rechazarse con `403` un `owner` explícito vacío en query/body? El plan dice que sí para todo valor explícito no coincidente, pero el código usa `owner or username` y lo trata como omitido.
 - **H-API-03:** ¿qué normalización y rechazo exactos de nombres se acordarán para caracteres especiales, incluido `:`? El nombre ADS `requirements.txt:payload.txt` pasa actualmente aunque se acordaron controles de nombre.
-- **H-API-04:** falta acordar perfil JWT del emisor (algoritmo, `iss`, `aud`, claims y gestión de claves); hasta entonces estas rutas siguen aceptando el formato legacy Base64.
+- **H-API-04:** la verificación RS256 está implementada; la rotación de claves o JWKS queda fuera de alcance y requiere propuesta separada.
 - El status y cuerpo ante excepciones internas no están definidos como contrato por estas rutas. Los ejemplos `500` reflejan el handler ASGI por defecto, no una respuesta JSON garantizada.
 
 ## Documentos consultados

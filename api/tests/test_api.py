@@ -1,4 +1,5 @@
 import base64
+import logging
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -395,6 +396,123 @@ def test_missing_authorization_returns_401_without_jwt_configuration(
         response = client.get("/api/tasks")
     assert response.status_code == 401
     assert response.json() == {"detail": "Invalid token"}
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "request_data", "expected_status"),
+    [
+        ("get", "/api/tasks", {}, 200),
+        ("post", "/api/tasks", {"json": {}}, 201),
+        ("get", "/api/summary", {}, 200),
+        (
+            "post",
+            "/api/requirements",
+            {"files": {"file": ("requirements.txt", b"text", "text/plain")}},
+            201,
+        ),
+        ("get", "/api/backend-health", {}, 200),
+    ],
+)
+def test_valid_jwt_without_role_reaches_every_protected_route(
+    method: str,
+    path: str,
+    request_data: dict,
+    expected_status: int,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class HealthyPoolManager:
+        def request(self, *args: object, **kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(status=200, data=b"ok")
+
+    monkeypatch.setattr(urllib3, "PoolManager", HealthyPoolManager)
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    with TestClient(app) as client:
+        response = getattr(client, method)(
+            path,
+            headers={"Authorization": f"Bearer {token(omit_claims=('role',))}"},
+            **request_data,
+        )
+    assert response.status_code == expected_status
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    ["Basic c3R1ZGVudDpXb3Jrc2hvcDEyMyE=", "Bearer", "Bearer two parts", "Token abc"],
+)
+def test_rejects_malformed_authorization_without_creating_task(
+    authorization: str, tmp_path: Path
+) -> None:
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    repository = app.state.task_repository
+    with TestClient(app) as client:
+        tasks_before = len(repository.list_by_owner("student"))
+        response = client.post(
+            "/api/tasks",
+            headers={"Authorization": authorization},
+            json={"title": "Blocked"},
+        )
+        tasks_after = len(repository.list_by_owner("student"))
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid token"}
+    assert tasks_after == tasks_before
+
+
+@pytest.mark.parametrize("variable_name", ("AUTH_JWT_ISSUER", "AUTH_JWT_AUDIENCE"))
+def test_missing_jwt_issuer_or_audience_fails_closed(
+    variable_name: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv(variable_name)
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    with TestClient(app) as client:
+        response = client.get("/api/tasks", headers=headers())
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Authentication configuration unavailable"
+    }
+
+
+def test_unusable_jwt_public_key_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AUTH_JWT_PUBLIC_KEY", "not-a-pem-key")
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    with TestClient(app) as client:
+        response = client.get("/api/tasks", headers=headers())
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Authentication configuration unavailable"
+    }
+
+
+def test_accepts_jwt_when_pem_newlines_are_escaped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AUTH_JWT_PUBLIC_KEY", TEST_PUBLIC_KEY.replace("\n", "\\n"))
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    with TestClient(app) as client:
+        response = client.get("/api/tasks", headers=headers())
+    assert response.status_code == 200
+
+
+def test_authentication_failures_do_not_log_credentials_or_key(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    rejected_token = token(signing_key=OTHER_PRIVATE_KEY)
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    with TestClient(app) as client:
+        client.get("/api/tasks", headers={"Authorization": f"Bearer {rejected_token}"})
+        monkeypatch.delenv("AUTH_JWT_ISSUER")
+        client.get("/api/tasks", headers={"Authorization": f"Bearer {rejected_token}"})
+    captured = capsys.readouterr()
+    output = caplog.text + captured.out + captured.err
+    assert rejected_token not in output
+    assert TEST_PUBLIC_KEY not in output
+    assert "BEGIN PUBLIC KEY" not in output
 
 
 def test_reports_backend_health(monkeypatch, tmp_path: Path) -> None:
