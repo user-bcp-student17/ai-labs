@@ -1,12 +1,22 @@
 import tempfile
 
+from fastapi import HTTPException
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import MAX_MULTIPART_OVERHEAD_BYTES, MAX_UPLOAD_BYTES, UPLOAD_CHUNK_BYTES
+from app.security import current_identity
 
 UPLOAD_PATH = "/api/requirements"
 MAX_UPLOAD_REQUEST_BYTES = MAX_UPLOAD_BYTES + MAX_MULTIPART_OVERHEAD_BYTES
+AUTHORIZATION_HEADER = b"authorization"
+
+
+def _authorization_header(scope: Scope) -> str:
+    for name, value in scope.get("headers", []):
+        if name == AUTHORIZATION_HEADER:
+            return value.decode("latin-1")
+    return ""
 
 
 class UploadRequestLimit:
@@ -16,6 +26,13 @@ class UploadRequestLimit:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope["method"] != "POST" or scope["path"] != UPLOAD_PATH:
             await self.app(scope, receive, send)
+            return
+
+        try:
+            current_identity(_authorization_header(scope))
+        except HTTPException as rejection:
+            response = JSONResponse(status_code=rejection.status_code, content={"detail": rejection.detail})
+            await response(scope, receive, send)
             return
 
         with tempfile.TemporaryFile() as body:

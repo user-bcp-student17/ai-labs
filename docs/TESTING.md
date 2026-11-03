@@ -6,6 +6,21 @@ Documento compartido. Cada componente mantiene su propia sección; las de `auth`
 
 Pruebas de la API FastAPI contra el contrato de la sección `api` de [ENDPOINTS.md](./ENDPOINTS.md). Cada ejecución se relaciona con el componente `api` y los IDs de `HALLAZGOS.md` (H-API-NN).
 
+### Actualización H-API-12 — 2026-11-03
+
+El token de `POST /api/requirements` se verifica en `UploadRequestLimit` antes de
+leer o copiar el cuerpo (`api/app/upload_limit.py`), reutilizando `current_identity`.
+Cambio de contrato aprobado: una solicitud sin token válido y con cuerpo mayor
+al límite responde 401 en lugar de 413.
+
+| Componente e ID | Momento | Comando con cwd `api/` | Salida | Resultado real |
+|---|---|---|---|---|
+| api, H-API-12 | Baseline | `python tools\lab.py test api` (desde la raíz) | 0 | 162 passed, 1 warning; cobertura 98.22% |
+| api, H-API-12 | Pruebas nuevas antes del cambio | `.\.venv\Scripts\python.exe -m pytest tests/test_upload_authentication.py --no-cov` | 1 | 22 failed, 4 passed (el cuerpo de prueba `valid_over_limit` no superaba el margen multipart; se corrigió en la prueba) |
+| api, H-API-12 | Suite completa después | `python tools\lab.py test api` (desde la raíz) | 0 | 188 passed, 1 warning; cobertura 98.31% |
+
+Pruebas: `api/tests/test_upload_authentication.py` (401 sin spool para 9 variantes de credencial, cuerpo en streaming sin consumir, secreto ausente → 500 sin spool, token válido sigue guardando, 413 con token válido, cabeceras CORS en el 401, preflight, paridad con `/api/tasks`). `api/tests/test_upload_security.py` añade el header `Authorization` en la prueba directa del middleware.
+
 ### Actualización H-API-04 — 2026-11-02
 
 La sección siguiente conserva la evidencia histórica previa a la corrección:

@@ -54,9 +54,10 @@ Errores comunes de autenticación (aplican a los 5 endpoints):
 | 500 | `WORKSHOP_JWT_SECRET` no está definida en el servidor y se envía un token (falla cerrado). | Texto plano: `Internal Server Error` |
 
 La autenticación se evalúa antes que la validación ordinaria del cuerpo: una
-petición sin token y con cuerpo inválido responde 401, no 422. Excepción:
-`POST /api/requirements` limita primero el tamaño total de la solicitud y
-puede responder 413 antes de autenticar.
+petición sin token y con cuerpo inválido responde 401, no 422. En
+`POST /api/requirements` el token se verifica antes de leer el cuerpo (H-API-12):
+una solicitud sin credenciales válidas responde 401 aunque supere el límite de
+tamaño y no se almacena. El 413 solo se devuelve a solicitudes autenticadas.
 
 #### Errores de validación (422) y de método (405)
 
@@ -284,9 +285,9 @@ Login must be accessible
 | Código | Cuándo | Cuerpo |
 |---|---|---|
 | 400 | Nombre inválido, por ejemplo con separadores, ruta absoluta o caracteres de control. | `{"detail":"Invalid filename"}` |
-| 401 | Token ausente o inválido. | `{"detail":"Invalid token"}` |
+| 401 | Token ausente o inválido. Se responde antes de leer el cuerpo, también si este supera el límite. | `{"detail":"Invalid token"}` |
 | 409 | Ya existe un archivo con ese nombre, incluso si lo subió otro usuario. | `{"detail":"File already exists"}` |
-| 413 | Archivo mayor de 5 MiB o solicitud mayor de 5 MiB más 64 KiB de margen multipart. | `{"detail":"File too large"}` o `{"detail":"Request too large"}` |
+| 413 | Solo con token válido: archivo mayor de 5 MiB o solicitud mayor de 5 MiB más 64 KiB de margen multipart. | `{"detail":"File too large"}` o `{"detail":"Request too large"}` |
 | 415 | Extensión no permitida o ausente. | `{"detail":"File extension not allowed"}` |
 | 422 | Falta el campo `file`: `{"detail":[{"type":"missing","loc":["body","file"],"msg":"Field required","input":null}]}`. También si la parte no trae nombre de archivo (observado con `filename=""`). | ver columna |
 | 500 | Secreto JWT no configurado o fallo inesperado de lectura o escritura. | `Internal Server Error` (texto plano) |

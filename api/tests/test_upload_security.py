@@ -154,7 +154,12 @@ def test_streaming_limit_stops_reading_before_application() -> None:
         async def send(message: Message) -> None:
             messages.append(message)
 
-        scope: Scope = {"type": "http", "method": "POST", "path": "/api/requirements"}
+        scope: Scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/requirements",
+            "headers": [(b"authorization", auth()["Authorization"].encode("latin-1"))],
+        }
         await UploadRequestLimit(app)(scope, receive, send)
         assert not app_called
         assert received == 82
