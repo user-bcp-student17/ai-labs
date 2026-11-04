@@ -1,0 +1,38 @@
+# Salida de ejemplo
+
+Las líneas 2 y 3 son copias del mismo evento. El aviso de credenciales de la línea 5 corresponde a otra correlación y no pertenece a la incidencia.
+
+```json
+{
+  "case_id": "caso-02",
+  "service": "acceso",
+  "error_code": "AUTH_DEPENDENCY_UNAVAILABLE",
+  "correlation_id": "LOGIN-DEMO-201",
+  "first_seen": "2026-11-03T15:00:01Z",
+  "last_seen": "2026-11-03T15:00:04Z",
+  "occurrences": 2,
+  "priority": "P2",
+  "summary": "La dependencia de identidad no respondió correctamente durante la autenticación.",
+  "impact": "La operación de acceso LOGIN-DEMO-201 recibió respuestas 503; el log no muestra su resultado final.",
+  "evidence": [
+    {
+      "file": "caso-02-acceso.jsonl",
+      "line": 2,
+      "text": "\"event_id\":\"evt-202\",\"code\":\"AUTH_DEPENDENCY_UNAVAILABLE\",\"http_status\":503,\"dependency\":\"identidad-demo\",\"password\":\"[REDACTADO]\""
+    },
+    {
+      "file": "caso-02-acceso.jsonl",
+      "line": 4,
+      "text": "\"event_id\":\"evt-203\",\"code\":\"AUTH_DEPENDENCY_UNAVAILABLE\",\"http_status\":503,\"dependency\":\"identidad-demo\",\"token\":\"[REDACTADO]\""
+    }
+  ],
+  "missing_data": [
+    "Resultado final de la operación de acceso.",
+    "Causa de la respuesta incorrecta de la dependencia de identidad.",
+    "Alcance de la afectación fuera de esta operación."
+  ],
+  "recommended_action": "Solicitar a soporte que compruebe el estado de la dependencia de identidad y el resultado de la operación antes de orientar al cliente."
+}
+```
+
+¿Apruebas registrar exactamente esta incidencia?
